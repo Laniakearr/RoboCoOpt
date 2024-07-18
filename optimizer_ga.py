@@ -21,9 +21,38 @@ B=10
 maxTrial=100
 maxDist = 2.0 * math.sqrt(2.0) * B
 
+# Note that data means the old state data, and solution is for GA
+def data_to_solution(data):
+    #print("data", data)
+    solution = data
+    # extend the solution to required length
+    cur_node_num = get_node_num(data)
+    if cur_node_num < MAX_NODE:
+        # print(len(solution), solution)
+        for i in range(MAX_NODE - cur_node_num):
+            solution += [-1, -1, -1, -1, -1]
+        # print("after extension", len(solution), solution)
+    #print("solution", solution)
+    return solution
+
+def solution_to_data(solution):
+    #print("solution", solution)
+    node_num = len(solution) // 5
+    while (int(solution[node_num * 5 - 1]) is NOT_USED) and node_num > 0:
+        node_num = node_num - 1
+    data = solution[:node_num*5]
+    data[0] = -1
+    data[4] = int(data[4])
+    for i in range(1, node_num):
+        data[5 * i + 0] = int(data[5 * i + 0])
+        data[5 * i + 1] = int(data[5 * i + 1])
+        data[5 * i + 4] = int(data[5 * i + 4])
+    #print("data", data)
+    return data
+
 #from LinkageAnnealer::nrN(:
-def get_node_number(solution):
-    return len(solution) // 5
+def get_node_num(data):
+    return len(data) // 5
 
 # From LinkageAnnealer
 def generate_init_state(ret=None):
@@ -58,20 +87,12 @@ def generate_init_state(ret=None):
 
 # generate a single initial solution
 def generate_solution():
-    solution = []
     while True:
-        solution = generate_init_state()
-        if check_feasibility(solution, min_node_num=3):
+        data = generate_init_state()
+        if not check_data_validity(data): print("something is wrong with check_data_validity function!")
+        if check_feasibility(data, min_node_num=3):
             break
-
-    # extend the solution to required length
-    cur_node_num = get_node_number(solution)
-    if cur_node_num < MAX_NODE:
-        #print(len(solution), solution)
-        for i in range(MAX_NODE - cur_node_num):
-            solution += [-1, -1, -1, -1, -1]
-        # print("after extension", len(solution), solution)
-    return solution
+    return data_to_solution(data)
 
 # generate initial population
 def generate_population(sol_per_pop):
@@ -81,8 +102,13 @@ def generate_population(sol_per_pop):
         solution = generate_solution()
         initial_population.append(solution)
         print(i, solution)
+        # check initial performance
+        link = set_to_linkage(solution_to_data(solution))
+        robot = create_robot(link, sep=5.)
+        if robot is not None:
+            print("performance", robot.eval_performance(10.))
     print("initial population generated")
-    print(initial_population)
+    #print(initial_population)
     return initial_population
 
 # generate limitation on each value in solution
@@ -97,26 +123,74 @@ def generate_gen_space():
         gene_space+=[random.randint(-1,i-1),random.randint(-1,i-1),random.uniform(0,maxDist),random.uniform(0,maxDist),[-1, 0, 1]]
     return gene_space
 
-# TODO: change the function to stop infinite loop
-def check_topology_feasibility(solution):
+# TODO: I add this to check some other cases to prevent inf. loop, please double check
+#  the checks are based on generate_init_state --Tina
+def check_data_validity(data, debug=False):
+    # debug = True # comment this out to reduce printing info
+    for i in range(get_node_num(data)):
+        state = data[i * 5 + 4]
+        first_connect = data[i * 5]
+        second_connect = data[i * 5 + 1]
+        if i==0:
+            if state is not MOVABLE:
+                if debug: print("motor not movable")
+                return False
+            if first_connect != -1:
+                if debug: print("motor first connect wrong")
+                return False
+        elif i==1:
+            if state is not FIXED:
+                if debug: print("first node not fixed")
+                return False
+            if first_connect != -1:
+                if debug: print("first node first connect wrong")
+                return False
+            if second_connect != -1:
+                if debug: print("first node second connect wrong")
+                return False
+        else:
+            if state is FIXED:
+                if first_connect != -1:
+                    if debug: print("FIXED node first connect wrong")
+                    return False
+                if second_connect != -1:
+                    if debug: print("FIXED node second connect wrong")
+                    return False
+            elif state is MOVABLE:
+                if first_connect == second_connect:
+                    if debug: print("connectes to same node")
+                    return False
+                if first_connect == -1:
+                    if debug: print("movable node first connect wrong")
+                    return False
+                if second_connect == -1:
+                    if debug: print("movable node second connect wrong")
+                    return False
+            else:
+                if debug: print("there is a not used point in structure")
+                return False
+    return True
+
+#from LinkageAnnealer
+def check_topology_feasibility(data):
     # check if every node is connected to the last node
-    node_num = get_node_number(solution)
+    node_num = get_node_num(data)
     visited = [False for i in range(node_num)]
     visited[node_num - 1] = True
     stack = [node_num - 1]
     iter = 0
-    while len(stack) > 0 and iter < 10:
-        #print("I am here")
+    while len(stack) > 0 and iter < 100:
         id = stack[-1]
         stack.pop()
-        if int(solution[id * 5 + 4]) == FIXED or id == 0:
+        if data[id * 5 + 4] == FIXED or id == 0:
             ss = []
         else:
-            ss = [int(solution[id * 5 + 0]), int(solution[id * 5 + 1])]
+            ss = [data[id * 5 + 0], data[id * 5 + 1]]
         for i in ss:
             stack.append(i)
             visited[i] = True
-        ++iter
+        iter += 1
+        if (iter == 100): print("warning, inf.loop:", data)
     for i in range(node_num):
         if not visited[i]:
             return False
@@ -124,21 +198,24 @@ def check_topology_feasibility(solution):
     visited = [False for i in range(node_num)]
     visited[0] = True
     stack = [0]
-    while len(stack) > 0:
+    iter = 0
+    while len(stack) > 0 and iter < 100:
         id = stack[-1]
         stack.pop()
         for j in range(id + 1, node_num):
-            if int(solution[j * 5 + 0]) == id or int(solution[j * 5 + 1]) == id:
+            if data[j * 5 + 0] == id or data[j * 5 + 1] == id:
                 stack.append(j)
                 visited[j] = True
+        iter += 1
+        if (iter == 100): print("warning, inf.loop:", data)
     for i in range(node_num):
-        if int(solution[i * 5 + 4]) == MOVABLE and not visited[i]:
+        if data[i * 5 + 4] == MOVABLE and not visited[i]:
             return False
     return True
 
-# TODO: check if if is working
-def check_geometry_feasibility(solution, nrSample=32):
-    link = set_to_linkage(solution)
+#from LinkageAnnealer
+def check_geometry_feasibility(data, nrSample=32):
+    link = set_to_linkage(data)
     for i in range(nrSample):
         theta, succ = link.forward_kinematic(math.pi * 2 * i / nrSample)
         if not succ:
@@ -150,37 +227,40 @@ def check_geometry_feasibility(solution, nrSample=32):
     return True
 
 # check the feasibility of the input solution
-def check_feasibility(solution, min_node_num=0):
-    return check_topology_feasibility(solution) \
-           and check_geometry_feasibility(solution) \
-           and get_node_number(solution) > min_node_num
+def check_feasibility(data, min_node_num=0):
+    return check_data_validity(data) \
+           and check_topology_feasibility(data) \
+           and check_geometry_feasibility(data) \
+           and get_node_num(data) > min_node_num
 
-# TODO: check if if is working
-def set_to_linkage(solution):
-    link=Linkage(get_node_number(solution))
-    link.rad_motor=solution[1]
-    link.ctr_motor=(solution[2],solution[3])
-    for i in range(1,get_node_number(solution)):
+#from LinkageAnnealer
+def set_to_linkage(data):
+    link=Linkage(get_node_num(data))
+    link.rad_motor=data[1]
+    link.ctr_motor=(data[2],data[3])
+    for i in range(1,get_node_num(data)):
         link.U[i+1]=1
-        state=solution[i*5+4]
+        state=data[i*5+4]
         if state==MOVABLE:
             link.F[i+1]=0
-            link.C1[i+1]=solution[i*5+0]+1
-            link.C2[i+1]=solution[i*5+1]+1
-            link.len1[i+1]=solution[i*5+2]
-            link.len2[i+1]=solution[i*5+3]
+            link.C1[i+1]=data[i*5+0]+1
+            link.C2[i+1]=data[i*5+1]+1
+            link.len1[i+1]=data[i*5+2]
+            link.len2[i+1]=data[i*5+3]
         elif state==FIXED:
             link.F[i+1]=1
-            link.node_position[i+1]=(solution[i*5+2],solution[i*5+3])
+            link.node_position[i+1]=(data[i*5+2],data[i*5+3])
         else: assert False
     return link
 
 def fitness_func(ga_instance, solution, solution_idx):
-    print(ga_instance, solution, solution_idx)
-    if not check_feasibility(solution):
-        #TODO: Can we modify/reset the solution to make it feasible? Or just dump it?
+    #print("solution index:", solution_idx)
+    #print(solution)
+    data = solution_to_data(solution.tolist())
+    if not check_feasibility(data):
+        #TODO: Can we modify/reset the data to make it feasible? Or just dump it?
         return -1
-    link = set_to_linkage(solution)
+    link = set_to_linkage(data)
     robot = create_robot(link, sep=5.)
     if robot is None:
         return 0.
@@ -195,7 +275,7 @@ if __name__ == '__main__':
     num_generations = 50
     num_parents_mating = 4
 
-    sol_per_pop = 5
+    sol_per_pop = 10
     #num_genes=30
     initial_population=generate_population(sol_per_pop)
     gene_space = generate_gen_space()
@@ -231,8 +311,6 @@ if __name__ == '__main__':
     print("Parameters of the best solution : {solution}".format(solution=solution))
     print("Fitness value of the best solution = {solution_fitness}".format(solution_fitness=solution_fitness))
 
-    prediction = numpy.sum(numpy.array(function_inputs) * solution)
-    print("Predicted output based on the best solution : {prediction}".format(prediction=prediction))
 # '''
 
 '''
