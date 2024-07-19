@@ -725,7 +725,7 @@ def create_robot(link, tau=8000., spd=1., sep=5., mu=0.25, dr=1., dl=1., nleg=4)
     link.ctr_motor=(0.,0.)
     link.rad_motor=abs(link.rad_motor)
     #check whether each state can be reached
-    if not link.check_validity():
+    if not link.check_geometry_feasibility():
         return None
         
     robot=LinkagePhysics(link,settings=settings)

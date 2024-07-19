@@ -128,7 +128,7 @@ class Linkage:
             self.node_position[i]=(xi,yi)
         self.curve.append(self.node_position[-1])
         return math.fmod(theta,math.pi*2),True
-    def check_validity(self, ntheta=360):
+    def check_geometry_feasibility(self, ntheta=360):
         self.node_position_batch=[np.vstack((np.ones(ntheta)*n[0],np.ones(ntheta)*n[1])) for n in self.node_position]
         theta=np.linspace(0,math.pi*2,ntheta)
         #motor node
@@ -158,6 +158,8 @@ class Linkage:
             xi = d1[0] + (-d12[0] * coefA + d12[1] * coefB) / (2 * d12Sqr)
             yi = d1[1] + (-d12[1] * coefA - d12[0] * coefB) / (2 * d12Sqr)
             self.node_position_batch[i] = np.vstack((xi, yi))
+            if np.any(xi <= -self.B) or np.any(xi >= self.B) or np.any(yi <= -self.B) or np.any(yi >= self.B):
+                return False
         return True
     def transCoordXY(self, screen, x, y):
         BX=self.B
@@ -354,6 +356,6 @@ def main_linkage(link):
         fid=fid+1
         
 if __name__=='__main__':
-    link=Linkage.createSimple()
-    link.check_validity()
+    link=Linkage.createJansen()
+    print('geometry validity=%d'%link.check_geometry_feasibility())
     main_linkage(link)

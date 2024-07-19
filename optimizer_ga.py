@@ -21,22 +21,265 @@ B=10
 maxTrial=100
 maxDist = 2.0 * math.sqrt(2.0) * B
 
+# note the only functions modified are __init__, check_feasibility, check_data_validity
+class LinkageGA():
+    NOT_USED=-1
+    MOVABLE=0
+    FIXED=1
+    #state definition is as follows:
+    #[-1,rad,ctrX,ctrY,state[0]]+
+    #[C1[i],C2[i],len1[i],len2[i],state[i] for i in range(K)]
+    def __init__(self, state=[], K=5, B=10):
+        self.state=state
+        self.K=K
+        self.B=B
+        self.maxTrial=100
+        if len(self.state) == 0:
+            while True:
+                self.state = self.generate_init_state()
+                if self.check_topology_feasibility() and self.check_geometry_feasibility():
+                    break
+    def generate_init_state(self, ret=None):
+        if ret is None:
+            ret=[]
+        maxDist=2.0*math.sqrt(2.0)*self.B
+        for i in range(len(ret)//5,self.K):
+            #state
+            if i==0:
+                state=self.MOVABLE
+            elif i==1:
+                state=random.choice([self.NOT_USED,self.FIXED])
+            else:
+                state=random.choice([self.NOT_USED,self.MOVABLE,self.FIXED])
+            #initialize according to state
+            if state==self.NOT_USED:
+                break
+            elif state==self.FIXED:
+                ret+=[-1,-1,random.uniform(-self.B,self.B),random.uniform(-self.B,self.B),state]
+            elif i==0:
+                #ret+=[-1,random.uniform(self.B/10,self.B),random.uniform(-self.B,self.B),random.uniform(-self.B,self.B),state]
+                ret+=[-1,random.uniform(self.B/10,self.B),0.0,0.0,state]
+            else:
+                s=[-1,-1,-1,-1,-1]
+                while s[0]==s[1]:
+                    s=[random.randint(0,i-1),random.randint(0,i-1),random.uniform(0,maxDist),random.uniform(0,maxDist),state]
+                ret+=s
+        #remove
+        while ret[-1]==self.FIXED:
+            ret=ret[0:len(ret)-5]
+        return ret
+    def check_feasibility(self, min_node_num=0):
+        return self.check_data_validity() \
+               and self.check_topology_feasibility() \
+               and self.check_geometry_feasibility() \
+               and self.nrN() > min_node_num
+    # TODO: I add this to check some other cases to prevent inf. loop, please double check
+    #  the checks are based on generate_init_state --Tina
+    def check_data_validity(self, debug=False):
+        debug = True # comment this out to reduce printing info
+        data = self.state
+        for i in range(self.nrN()):
+            state = data[i * 5 + 4]
+            first_connect = data[i * 5]
+            second_connect = data[i * 5 + 1]
+            if i == 0:
+                if state is not MOVABLE:
+                    if debug: print("motor not movable")
+                    return False
+                if first_connect != -1:
+                    if debug: print("motor first connect wrong")
+                    return False
+            elif i == 1:
+                if state is not FIXED:
+                    if debug: print("first node not fixed")
+                    return False
+                if first_connect != -1:
+                    if debug: print("first node first connect wrong")
+                    return False
+                if second_connect != -1:
+                    if debug: print("first node second connect wrong")
+                    return False
+            else:
+                if state is FIXED:
+                    if first_connect != -1:
+                        if debug: print("FIXED node first connect wrong")
+                        return False
+                    if second_connect != -1:
+                        if debug: print("FIXED node second connect wrong")
+                        return False
+                elif state is MOVABLE:
+                    if first_connect == second_connect:
+                        if debug: print("connectes to same node")
+                        return False
+                    if first_connect == -1:
+                        if debug: print("movable node first connect wrong")
+                        return False
+                    if second_connect == -1:
+                        if debug: print("movable node second connect wrong")
+                        return False
+                else:
+                    if debug: print("there is a not used point in structure")
+                    return False
+        return True
+    # check the feasibility of the input solution
+    def check_topology_feasibility(self):
+        #check if there is at least one non-motor movable node
+        if self.state[-1] != self.MOVABLE or len(self.state)//5<3:
+            return False
+        #check if every node is connected to the last node
+        visited=[False for i in range(self.nrN())]
+        visited[self.nrN()-1]=True
+        stack=[self.nrN()-1]
+        while len(stack)>0:
+            id=stack[-1]
+            stack.pop()
+            if self.state[id*5+4]==self.FIXED or id==0:
+                ss=[]
+            else: ss=[self.state[id*5+0],self.state[id*5+1]]
+            for i in ss:
+                stack.append(i)
+                visited[i]=True
+        for i in range(self.nrN()):
+            if not visited[i]:
+                return False
+        #check if every movable node is connected to motor-node
+        visited=[False for i in range(self.nrN())]
+        visited[0]=True
+        stack=[0]
+        while len(stack)>0:
+            id=stack[-1]
+            stack.pop()
+            for j in range(id+1,self.nrN()):
+                if self.state[j*5+0]==id or self.state[j*5+1]==id:
+                    stack.append(j)
+                    visited[j]=True
+        for i in range(self.nrN()):
+            if self.state[i*5+4]==self.MOVABLE and not visited[i]:
+                return False
+        return True
+    def check_geometry_feasibility(self):
+        self.link=self.set_to_linkage()
+        return self.link.check_geometry_feasibility()
+    def change_geometry(self):
+        #we can change rad_motor,len1,len2
+        #we cannot change ctr_motor
+        ids=[]
+        for i in range(self.nrN()):
+            if i==0:
+                ids+=[1]#ids+=[1,2,3]
+            else: ids+=[i*5+2,i*5+3]
+        id=random.choice(ids)
+        ctr=self.state[id]
+        delta=self.B
+        trial=0
+        while trial<self.maxTrial:
+            val=random.uniform(ctr-delta,ctr+delta)
+            self.state[id]=val
+            if self.check_geometry_feasibility():
+                break
+            trial=trial+1
+        return trial<self.maxTrial
+    def add_node(self):
+        if len(self.state)==self.K*5:
+            return False
+        nrN0=self.nrN()
+        state0=copy.deepcopy(self.state)
+        trial=0
+        while trial<self.maxTrial:
+            self.state=self.generate_init_state(ret=copy.deepcopy(state0))
+            if self.check_topology_feasibility() and self.check_geometry_feasibility() and self.nrN()>nrN0:
+                break
+            trial=trial+1
+        return trial<self.maxTrial
+    def remove_node(self):
+        if len(self.state)==5:
+            return False
+        self.state=self.state[0:len(self.state)-5]
+        return self.check_topology_feasibility() and self.check_geometry_feasibility()
+    def set_to_linkage(self):
+        link=Linkage(self.nrN())
+        link.rad_motor=self.state[1]
+        link.ctr_motor=(self.state[2],self.state[3])
+        for i in range(1,self.nrN()):
+            link.U[i+1]=1
+            state=self.state[i*5+4]
+            if state==self.MOVABLE:
+                link.F[i+1]=0
+                link.C1[i+1]=self.state[i*5+0]+1
+                link.C2[i+1]=self.state[i*5+1]+1
+                link.len1[i+1]=self.state[i*5+2]
+                link.len2[i+1]=self.state[i*5+3]
+            elif state==self.FIXED:
+                link.F[i+1]=1
+                link.node_position[i+1]=(self.state[i*5+2],self.state[i*5+3])
+            else: assert False
+        return link
+    def nrN(self):
+        return len(self.state)//5
+    def move(self):
+        self.mutation()
+    def mutation(self):
+        state0=copy.deepcopy(self.state)
+        while True:
+            self.state=copy.deepcopy(state0)
+            op_type=random.randint(0,2)
+            if op_type==0:
+                #change length
+                if self.change_geometry():
+                    break
+            elif op_type==1:
+                #add node
+                if self.add_node():
+                    break
+            else:
+                assert op_type==2
+                #remove node
+                if self.remove_node():
+                    break
+    def cross_over_once(self, mother, father):
+        nrN_mother = len(mother)//5
+        nrN_father = len(father)//5
+        nrN_max = max(nrN_mother,nrN_father)
+        result = []
+        for i in range(nrN_max):
+            choice=random.randint(0,1)
+            if choice == 0:
+                if len(mother) < i*5+5:
+                    break
+                result += mother[i*5:i*5+5]
+            else:
+                if len(father) < i*5+5:
+                    break
+                result += father[i*5:i*5+5]
+        return result
+    def cross_over(self, mother, father):
+        while True: #this will always terminate by only choosing mother/father
+            self.state = self.cross_over_once(mother, father)
+            if self.check_geometry_feasibility() and self.check_geometry_feasibility():
+                break
+    def energy(self):
+        link=self.set_to_linkage()
+        robot=create_robot(link, sep=5.)
+        if robot is None:
+            return 0.
+        else: return -robot.eval_performance(10.)
+
 # Note that data means the old state data, and solution is for GA
-def data_to_solution(data):
+def data_to_solution(linkage):
     #print("data", data)
-    solution = data
-    # extend the solution to required length
-    cur_node_num = get_node_num(data)
+    solution = linkage.state
+    cur_node_num = linkage.nrN()
     if cur_node_num < MAX_NODE:
         # print(len(solution), solution)
         for i in range(MAX_NODE - cur_node_num):
             solution += [-1, -1, -1, -1, -1]
         # print("after extension", len(solution), solution)
     #print("solution", solution)
-    return solution
+    return np.array(solution)
 
 def solution_to_data(solution):
     #print("solution", solution)
+    solution = solution.tolist()
     node_num = len(solution) // 5
     while (int(solution[node_num * 5 - 1]) is NOT_USED) and node_num > 0:
         node_num = node_num - 1
@@ -48,51 +291,20 @@ def solution_to_data(solution):
         data[5 * i + 1] = int(data[5 * i + 1])
         data[5 * i + 4] = int(data[5 * i + 4])
     #print("data", data)
-    return data
-
-#from LinkageAnnealer::nrN(:
-def get_node_num(data):
-    return len(data) // 5
-
-# From LinkageAnnealer
-def generate_init_state(ret=None):
-    if ret is None:
-        ret = []
-    for i in range(len(ret)//5, K):
-        # set state
-        if i == 0:
-            state = MOVABLE
-        elif i == 1:
-            state = random.choice([NOT_USED, FIXED])
-        else:
-            state = random.choice([NOT_USED, MOVABLE, FIXED])
-        # initialize according to state
-        if state == NOT_USED:
-            break
-        elif state == FIXED:
-            ret += [-1, -1, random.uniform(-B, B), random.uniform(-B, B), state]
-        elif i == 0:
-            # ret+=[-1,random.uniform(B/10,B),random.uniform(-B,B),random.uniform(-B,B),state]
-            ret += [-1, random.uniform(B / 10, B), 0.0, 0.0, state]
-        else:
-            s = [-1, -1, -1, -1, -1]
-            while s[0] == s[1]:
-                s = [random.randint(0, i - 1), random.randint(0, i - 1), random.uniform(0, maxDist),
-                     random.uniform(0, maxDist), state]
-            ret += s
-    # remove
-    while ret[-1] == FIXED:
-        ret = ret[0:len(ret) - 5]
-    return ret
+    linkage = LinkageGA(state=copy.deepcopy(data))
+    #print("linkage", linkage.state)
+    return linkage
 
 # generate a single initial solution
 def generate_solution():
-    while True:
-        data = generate_init_state()
-        if not check_data_validity(data): print("something is wrong with check_data_validity function!")
-        if check_feasibility(data, min_node_num=3):
-            break
-    return data_to_solution(data)
+    # check initial performance
+    linkage = LinkageGA()
+    link = linkage.set_to_linkage()
+    robot = create_robot(link, sep=5.)
+    if robot is not None:
+        print("performance", robot.eval_performance(10.))
+    print(linkage.state)
+    return data_to_solution(linkage)
 
 # generate initial population
 def generate_population(sol_per_pop):
@@ -101,12 +313,7 @@ def generate_population(sol_per_pop):
     for i in range(sol_per_pop):
         solution = generate_solution()
         initial_population.append(solution)
-        print(i, solution)
-        # check initial performance
-        link = set_to_linkage(solution_to_data(solution))
-        robot = create_robot(link, sep=5.)
-        if robot is not None:
-            print("performance", robot.eval_performance(10.))
+        print(i, len(solution), solution)
     print("initial population generated")
     #print(initial_population)
     return initial_population
@@ -123,149 +330,55 @@ def generate_gen_space():
         gene_space+=[random.randint(-1,i-1),random.randint(-1,i-1),random.uniform(0,maxDist),random.uniform(0,maxDist),[-1, 0, 1]]
     return gene_space
 
-# TODO: I add this to check some other cases to prevent inf. loop, please double check
-#  the checks are based on generate_init_state --Tina
-def check_data_validity(data, debug=False):
-    # debug = True # comment this out to reduce printing info
-    for i in range(get_node_num(data)):
-        state = data[i * 5 + 4]
-        first_connect = data[i * 5]
-        second_connect = data[i * 5 + 1]
-        if i==0:
-            if state is not MOVABLE:
-                if debug: print("motor not movable")
-                return False
-            if first_connect != -1:
-                if debug: print("motor first connect wrong")
-                return False
-        elif i==1:
-            if state is not FIXED:
-                if debug: print("first node not fixed")
-                return False
-            if first_connect != -1:
-                if debug: print("first node first connect wrong")
-                return False
-            if second_connect != -1:
-                if debug: print("first node second connect wrong")
-                return False
-        else:
-            if state is FIXED:
-                if first_connect != -1:
-                    if debug: print("FIXED node first connect wrong")
-                    return False
-                if second_connect != -1:
-                    if debug: print("FIXED node second connect wrong")
-                    return False
-            elif state is MOVABLE:
-                if first_connect == second_connect:
-                    if debug: print("connectes to same node")
-                    return False
-                if first_connect == -1:
-                    if debug: print("movable node first connect wrong")
-                    return False
-                if second_connect == -1:
-                    if debug: print("movable node second connect wrong")
-                    return False
-            else:
-                if debug: print("there is a not used point in structure")
-                return False
-    return True
-
-#from LinkageAnnealer
-def check_topology_feasibility(data):
-    # check if every node is connected to the last node
-    node_num = get_node_num(data)
-    visited = [False for i in range(node_num)]
-    visited[node_num - 1] = True
-    stack = [node_num - 1]
-    iter = 0
-    while len(stack) > 0 and iter < 100:
-        id = stack[-1]
-        stack.pop()
-        if data[id * 5 + 4] == FIXED or id == 0:
-            ss = []
-        else:
-            ss = [data[id * 5 + 0], data[id * 5 + 1]]
-        for i in ss:
-            stack.append(i)
-            visited[i] = True
-        iter += 1
-        if (iter == 100): print("warning, inf.loop:", data)
-    for i in range(node_num):
-        if not visited[i]:
-            return False
-    # check if every movable node is connected to motor-node
-    visited = [False for i in range(node_num)]
-    visited[0] = True
-    stack = [0]
-    iter = 0
-    while len(stack) > 0 and iter < 100:
-        id = stack[-1]
-        stack.pop()
-        for j in range(id + 1, node_num):
-            if data[j * 5 + 0] == id or data[j * 5 + 1] == id:
-                stack.append(j)
-                visited[j] = True
-        iter += 1
-        if (iter == 100): print("warning, inf.loop:", data)
-    for i in range(node_num):
-        if data[i * 5 + 4] == MOVABLE and not visited[i]:
-            return False
-    return True
-
-#from LinkageAnnealer
-def check_geometry_feasibility(data, nrSample=32):
-    link = set_to_linkage(data)
-    for i in range(nrSample):
-        theta, succ = link.forward_kinematic(math.pi * 2 * i / nrSample)
-        if not succ:
-            return False
-        for pos in link.node_position:
-            for d in range(2):
-                if pos[d] < -B or pos[d] > B:
-                    return False
-    return True
-
-# check the feasibility of the input solution
-def check_feasibility(data, min_node_num=0):
-    return check_data_validity(data) \
-           and check_topology_feasibility(data) \
-           and check_geometry_feasibility(data) \
-           and get_node_num(data) > min_node_num
-
-#from LinkageAnnealer
-def set_to_linkage(data):
-    link=Linkage(get_node_num(data))
-    link.rad_motor=data[1]
-    link.ctr_motor=(data[2],data[3])
-    for i in range(1,get_node_num(data)):
-        link.U[i+1]=1
-        state=data[i*5+4]
-        if state==MOVABLE:
-            link.F[i+1]=0
-            link.C1[i+1]=data[i*5+0]+1
-            link.C2[i+1]=data[i*5+1]+1
-            link.len1[i+1]=data[i*5+2]
-            link.len2[i+1]=data[i*5+3]
-        elif state==FIXED:
-            link.F[i+1]=1
-            link.node_position[i+1]=(data[i*5+2],data[i*5+3])
-        else: assert False
-    return link
-
 def fitness_func(ga_instance, solution, solution_idx):
     #print("solution index:", solution_idx)
     #print(solution)
-    data = solution_to_data(solution.tolist())
-    if not check_feasibility(data):
+    linkage = solution_to_data(solution)
+    #print(linkage.state)
+    if not linkage.check_feasibility():
         #TODO: Can we modify/reset the data to make it feasible? Or just dump it?
         return -1
-    link = set_to_linkage(data)
+    link = linkage.set_to_linkage()
     robot = create_robot(link, sep=5.)
     if robot is None:
         return 0.
     else:
         return robot.eval_performance(10.)
+
+def crossover_func(parents, offspring_size, ga_instance):
+    offspring = []
+    idx = 0
+    while len(offspring) != offspring_size[0]:
+        parent1 = parents[idx % parents.shape[0], :].copy()
+        parent2 = parents[(idx + 1) % parents.shape[0], :].copy()
+
+        linkageP1 = solution_to_data(parent1)
+        linkageP2 = solution_to_data(parent2)
+        linkageChild = LinkageGA()
+
+        #print("mother", parent1)
+        #print("father", parent2)
+
+        #print("motherData", linkageP1.state, type(linkageP1.state))
+        #print("fatherData", linkageP2.state, type(linkageP2.state))
+        linkageChild.cross_over(linkageP1.state, linkageP2.state)
+        #print("childData", linkageChild.state, type(linkageP2.state))
+        child = data_to_solution(linkageChild)
+
+        #print("child", child)
+        offspring.append(child)
+        idx += 1
+
+    return numpy.array(offspring)
+
+def mutation_func(offspring, ga_instance):
+    for chromosome_idx in range(offspring.shape[0]):
+        linkage = solution_to_data(offspring[chromosome_idx])
+        #print("before mutation", offspring[chromosome_idx])
+        linkage.mutation()
+        offspring[chromosome_idx] = data_to_solution(linkage)
+        #print("after mutation", offspring[chromosome_idx])
+    return offspring
 
 if __name__ == '__main__':
     # desired distance
@@ -275,7 +388,7 @@ if __name__ == '__main__':
     num_generations = 50
     num_parents_mating = 4
 
-    sol_per_pop = 10
+    sol_per_pop = 5
     #num_genes=30
     initial_population=generate_population(sol_per_pop)
     gene_space = generate_gen_space()
@@ -286,10 +399,10 @@ if __name__ == '__main__':
     parent_selection_type = "sss"
     keep_parents = 1
 
-    crossover_type = "single_point"
+    #crossover_type = "single_point"
 
-    mutation_type = "random"
-    mutation_percent_genes = 50
+    #mutation_type = "random"
+    #mutation_percent_genes = 50
 
     ga_instance = pygad.GA(num_generations=num_generations,
                            num_parents_mating=num_parents_mating,
@@ -301,9 +414,9 @@ if __name__ == '__main__':
                            #init_range_high=init_range_high,
                            parent_selection_type=parent_selection_type,
                            keep_parents=keep_parents,
-                           crossover_type=crossover_type,
-                           mutation_type=mutation_type,
-                           mutation_percent_genes=mutation_percent_genes,
+                           crossover_type=crossover_func,
+                           mutation_type=mutation_func,
+                           #mutation_percent_genes=mutation_percent_genes,
                            gene_space=gene_space)
 
     ga_instance.run()
