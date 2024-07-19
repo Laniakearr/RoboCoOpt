@@ -58,7 +58,9 @@ class LinkageGA():
                 ret+=[-1,-1,random.uniform(-self.B,self.B),random.uniform(-self.B,self.B),state]
             elif i==0:
                 #ret+=[-1,random.uniform(self.B/10,self.B),random.uniform(-self.B,self.B),random.uniform(-self.B,self.B),state]
-                ret+=[-1,random.uniform(self.B/10,self.B),0.0,0.0,state]
+                #ret+=[-1,random.uniform(self.B/10,self.B),0.0,0.0,state]\
+                # fix motor size
+                ret += [-1, 1, 0.0, 0.0, state]
             else:
                 s=[-1,-1,-1,-1,-1]
                 while s[0]==s[1]:
@@ -164,10 +166,13 @@ class LinkageGA():
         #we can change rad_motor,len1,len2
         #we cannot change ctr_motor
         ids=[]
-        for i in range(self.nrN()):
-            if i==0:
-                ids+=[1]#ids+=[1,2,3]
-            else: ids+=[i*5+2,i*5+3]
+        # for i in range(self.nrN()):
+        #     if i==0:
+        #         ids+=[1]#ids+=[1,2,3]
+        #     else: ids+=[i*5+2,i*5+3]
+        # fix motor size
+        for i in range(1, self.nrN()):
+            ids+=[i*5+2,i*5+3]
         id=random.choice(ids)
         ctr=self.state[id]
         delta=self.B
@@ -343,7 +348,9 @@ def fitness_func(ga_instance, solution, solution_idx):
     if robot is None:
         return 0.
     else:
-        return robot.eval_performance(10.)
+        performance = robot.eval_performance(10.)
+        print("performance", performance)
+        return performance
 
 def crossover_func(parents, offspring_size, ga_instance):
     offspring = []
@@ -382,13 +389,13 @@ def mutation_func(offspring, ga_instance):
 
 if __name__ == '__main__':
     # desired distance
-    desired_output = 25
+    desired_output = 30
     fitness_function = fitness_func
 
-    num_generations = 50
+    num_generations = 80
     num_parents_mating = 4
 
-    sol_per_pop = 5
+    sol_per_pop = 200
     #num_genes=30
     initial_population=generate_population(sol_per_pop)
     gene_space = generate_gen_space()
@@ -416,6 +423,7 @@ if __name__ == '__main__':
                            keep_parents=keep_parents,
                            crossover_type=crossover_func,
                            mutation_type=mutation_func,
+                           parallel_processing=["process", 10],
                            #mutation_percent_genes=mutation_percent_genes,
                            gene_space=gene_space)
 
@@ -423,6 +431,14 @@ if __name__ == '__main__':
     solution, solution_fitness, solution_idx = ga_instance.best_solution()
     print("Parameters of the best solution : {solution}".format(solution=solution))
     print("Fitness value of the best solution = {solution_fitness}".format(solution_fitness=solution_fitness))
+
+    linkage = solution_to_data(solution)
+    with open('bestGA.pickle', 'wb') as handle:
+        pickle.dump(linkage.state, handle)
+
+    link = linkage.set_to_linkage()
+    robot = create_robot(link, sep=5.)
+    main_linkage_physics(robot)
 
 # '''
 
